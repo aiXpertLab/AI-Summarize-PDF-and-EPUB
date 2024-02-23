@@ -1,6 +1,16 @@
-import os
-import tempfile
-from langchain.document_loaders import PyPDFLoader, UnstructuredEPubLoader
+import os, tempfile
+import numpy as np
+from dotenv import load_dotenv
+from sklearn.cluster import KMeans
+
+from langchain.schema import Document
+from langchain.prompts import PromptTemplate
+from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
+from langchain.chains.summarize import load_summarize_chain, LLMChain
+
+from langchain_community.chat_models import ChatOpenAI
+from langchain_community.document_loaders import DirectoryLoader, TextLoader, PyPDFLoader, WebBaseLoader, PyPDFDirectoryLoader, UnstructuredEPubLoader
+from langchain_community.embeddings import LlamaCppEmbeddings, HuggingFaceEmbeddings, OpenAIEmbeddings
 
 def load_book(file_obj, file_extension):
     """Load the content of a book based on its file type."""
@@ -17,12 +27,10 @@ def load_book(file_obj, file_extension):
             text = "\n".join(element.page_content for element in data)
         else:
             raise ValueError(f"Unsupported file extension: {file_extension}")
+        temp_file.close()
         os.remove(temp_file.name)
     text = text.replace('\t', ' ')
     return text
-
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
 
 def split_and_embed(text, openai_api_key):
     text_splitter = RecursiveCharacterTextSplitter(separators=["\n\n", "\n", "\t"], chunk_size=10000, chunk_overlap=3000)
@@ -31,19 +39,14 @@ def split_and_embed(text, openai_api_key):
     vectors = embeddings.embed_documents([x.page_content for x in docs])
     return docs, vectors
 
-from sklearn.cluster import KMeans
-import numpy as np
-
 def cluster_embeddings(vectors, num_clusters):
     kmeans = KMeans(n_clusters=num_clusters, random_state=42).fit(vectors)
     closest_indices = [np.argmin(np.linalg.norm(vectors - center, axis=1)) for center in kmeans.cluster_centers_]
     return sorted(closest_indices)
 
-from langchain.chains.summarize import load_summarize_chain
-from langchain.prompts import PromptTemplate
 
 def summarize_chunks(docs, selected_indices, openai_api_key):
-    llm3_turbo = ChatOpenAI(temperature=0, openai_api_key=openai_api_key, max_tokens=1000, model='gpt-3.5-turbo-16k')
+    llm3_turbo = ChatOpenAI(temperature=0, openai_api_key=openai_api_key, max_tokens=200, model='gpt-3.5-turbo-16k')
     map_prompt = """
     You are provided with a passage from a book. Your task is to produce a comprehensive summary of this passage. Ensure accuracy and avoid adding any interpretations or extra details not present in the original text. The summary should be at least three paragraphs long and fully capture the essence of the passage.
     ```{text}```
@@ -59,11 +62,9 @@ def summarize_chunks(docs, selected_indices, openai_api_key):
     
     return "\n".join(summary_list)
 
-from langchain.schema import Document
-from langchain.chat_models import ChatOpenAI
 
 def create_final_summary(summaries, openai_api_key):
-    llm4 = ChatOpenAI(temperature=0, openai_api_key=openai_api_key, max_tokens=3000, model='gpt-4', request_timeout=120)
+    llm4 = ChatOpenAI(temperature=0, openai_api_key=openai_api_key, max_tokens=800, model='gpt-3.5-turbo-16k', request_timeout=120)
     combine_prompt = """
     You are given a series of summarized sections from a book. Your task is to weave these summaries into a single, cohesive, and verbose summary. The reader should be able to understand the main events or points of the book from your summary. Ensure you retain the accuracy of the content and present it in a clear and engaging manner.
     ```{text}```
@@ -73,7 +74,6 @@ def create_final_summary(summaries, openai_api_key):
     reduce_chain = load_summarize_chain(llm=llm4, chain_type="stuff", prompt=combine_prompt_template)
     final_summary = reduce_chain.run([Document(page_content=summaries)])
     return final_summary
-
 
 def generate_summary(uploaded_file, openai_api_key, num_clusters=11, verbose=False):
     file_extension = os.path.splitext(uploaded_file.name)[1].lower()
@@ -88,7 +88,7 @@ def generate_summary(uploaded_file, openai_api_key, num_clusters=11, verbose=Fal
 if __name__ == '__main__':
     load_dotenv()
     openai_api_key = os.getenv('OPENAI_API_KEY')
-    book_path = "path_to_your_book.epub"
+    book_path = "E:/Dropbox/epub/newconcept4.epub"
     with open(book_path, 'rb') as uploaded_file:
         summary = generate_summary(uploaded_file, openai_api_key, verbose=True)
         print(summary)
